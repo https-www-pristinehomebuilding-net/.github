@@ -1,0 +1,281 @@
+name: Access Control and User Management
+
+on:
+  push:
+    paths:
+      - 'access-control/**'
+      - 'users/**'
+  workflow_dispatch:
+    inputs:
+      user_group:
+        description: 'User group to manage'
+        required: true
+        type: choice
+        options:
+          - 'site_planners'
+          - 'material_managers'
+          - 'order_trackers'
+          - 'pricing_analysts'
+          - 'admin'
+
+env:
+  IPFS_PATH: /tmp/ipfs
+
+jobs:
+  setup-access-control:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup IPFS Node
+        run: |
+          wget https://dist.ipfs.io/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz
+          tar -xzf kubo_v0.24.0_linux-amd64.tar.gz
+          sudo install kubo/ipfs /usr/local/bin/
+          ipfs init --profile server
+          ipfs daemon &
+          sleep 10
+
+      - name: Create Access Control Structure
+        run: |
+          mkdir -p access-control/groups access-control/permissions access-control/keys
+          
+          # Define user groups and their permissions
+          cat > access-control/groups/site_planners.json << 'EOF'
+          {
+            "group_name": "site_planners",
+            "description": "Site planning and design team",
+            "permissions": {
+              "cad_files": ["read", "write", "share"],
+              "images": ["read", "write", "share"],
+              "pricing": ["read"],
+              "orders": ["read"],
+              "projects": ["read", "write"]
+            },
+            "ipfs_access": {
+              "can_pin": true,
+              "storage_quota": "10GB",
+              "bandwidth_limit": "100MB/s"
+            }
+          }
+          EOF
+          
+          cat > access-control/groups/material_managers.json << 'EOF'
+          {
+            "group_name": "material_managers",
+            "description": "Building materials management team",
+            "permissions": {
+              "cad_files": ["read"],
+              "images": ["read", "write", "share"],
+              "pricing": ["read", "write"],
+              "orders": ["read", "write", "create"],
+              "suppliers": ["read", "write", "manage"]
+            },
+            "ipfs_access": {
+              "can_pin": true,
+              "storage_quota": "20GB",
+              "bandwidth_limit": "200MB/s"
+            }
+          }
+          EOF
+          
+          cat > access-control/groups/order_trackers.json << 'EOF'
+          {
+            "group_name": "order_trackers",
+            "description": "Order tracking and logistics team",
+            "permissions": {
+              "orders": ["read", "write", "track", "update"],
+              "pricing": ["read"],
+              "suppliers": ["read"],
+              "logistics": ["read", "write", "manage"]
+            },
+            "ipfs_access": {
+              "can_pin": false,
+              "storage_quota": "5GB",
+              "bandwidth_limit": "50MB/s"
+            }
+          }
+          EOF
+          
+          cat > access-control/groups/pricing_analysts.json << 'EOF'
+          {
+            "group_name": "pricing_analysts",
+            "description": "Pricing analysis and market research team",
+            "permissions": {
+              "pricing": ["read", "write", "analyze", "export"],
+              "market_data": ["read", "write", "import"],
+              "reports": ["read", "write", "generate"],
+              "suppliers": ["read"]
+            },
+            "ipfs_access": {
+              "can_pin": true,
+              "storage_quota": "15GB",
+              "bandwidth_limit": "150MB/s"
+            }
+          }
+          EOF
+          
+          cat > access-control/groups/admin.json << 'EOF'
+          {
+            "group_name": "admin",
+            "description": "System administrators",
+            "permissions": {
+              "all": ["read", "write", "delete", "manage", "admin"],
+              "system": ["configure", "monitor", "backup", "restore"],
+              "users": ["create", "modify", "delete", "assign_roles"]
+            },
+            "ipfs_access": {
+              "can_pin": true,
+              "storage_quota": "unlimited",
+              "bandwidth_limit": "unlimited",
+              "admin_access": true
+            }
+          }
+          EOF
+
+      - name: Generate Access Keys
+        run: |
+          # Generate IPFS keys for each group
+          for group in site_planners material_managers order_trackers pricing_analysts admin; do
+            echo "Generating key for group: $group"
+            ipfs key gen $group > access-control/keys/${group}_key.txt
+            
+            # Create group-specific IPFS config
+            cat > access-control/keys/${group}_config.json << EOF
+          {
+            "group": "$group",
+            "key_name": "$group",
+            "created": "$(date -Iseconds)",
+            "ipfs_key_id": "$(cat access-control/keys/${group}_key.txt)"
+          }
+          EOF
+          done
+
+      - name: Create Permission Matrix
+        run: |
+          cat > access-control/permissions/matrix.json << 'EOF'
+          {
+            "permission_matrix": {
+              "resources": {
+                "cad_files": {
+                  "site_planners": ["read", "write", "share"],
+                  "material_managers": ["read"],
+                  "order_trackers": [],
+                  "pricing_analysts": [],
+                  "admin": ["read", "write", "delete", "manage"]
+                },
+                "images": {
+                  "site_planners": ["read", "write", "share"],
+                  "material_managers": ["read", "write", "share"],
+                  "order_trackers": ["read"],
+                  "pricing_analysts": ["read"],
+                  "admin": ["read", "write", "delete", "manage"]
+                },
+                "pricing_data": {
+                  "site_planners": ["read"],
+                  "material_managers": ["read", "write"],
+                  "order_trackers": ["read"],
+                  "pricing_analysts": ["read", "write", "analyze", "export"],
+                  "admin": ["read", "write", "delete", "manage"]
+                },
+                "orders": {
+                  "site_planners": ["read"],
+                  "material_managers": ["read", "write", "create"],
+                  "order_trackers": ["read", "write", "track", "update"],
+                  "pricing_analysts": [],
+                  "admin": ["read", "write", "delete", "manage"]
+                }
+              }
+            }
+          }
+          EOF
+
+      - name: Upload Access Control to IPFS
+        run: |
+          # Upload each group configuration
+          for group_file in access-control/groups/*.json; do
+            GROUP_HASH=$(ipfs add -q "$group_file")
+            echo "Group config uploaded: $(basename $group_file) -> $GROUP_HASH"
+            ipfs pin add $GROUP_HASH
+          done
+          
+          # Upload permission matrix
+          MATRIX_HASH=$(ipfs add -q access-control/permissions/matrix.json)
+          echo "Permission matrix uploaded: $MATRIX_HASH"
+          ipfs pin add $MATRIX_HASH
+          
+          # Upload entire access control directory
+          ACCESS_CONTROL_HASH=$(ipfs add -r -q access-control | tail -1)
+          echo "Access control system uploaded: $ACCESS_CONTROL_HASH"
+          ipfs pin add $ACCESS_CONTROL_HASH
+          
+          # Create master access control index
+          cat > access-control/master-access.json << EOF
+          {
+            "access_control_version": "1.0.0",
+            "last_updated": "$(date -Iseconds)",
+            "ipfs_hash": "$ACCESS_CONTROL_HASH",
+            "permission_matrix_hash": "$MATRIX_HASH",
+            "active_groups": ["site_planners", "material_managers", "order_trackers", "pricing_analysts", "admin"]
+          }
+          EOF
+          
+          MASTER_ACCESS_HASH=$(ipfs add -q access-control/master-access.json)
+          echo "Master access control uploaded: $MASTER_ACCESS_HASH"
+          ipfs pin add $MASTER_ACCESS_HASH
+
+  user-management:
+    runs-on: ubuntu-latest
+    needs: setup-access-control
+    if: github.event.inputs.user_group != ''
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup IPFS Node
+        run: |
+          wget https://dist.ipfs.io/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz
+          tar -xzf kubo_v0.24.0_linux-amd64.tar.gz
+          sudo install kubo/ipfs /usr/local/bin/
+          ipfs init --profile server
+          ipfs daemon &
+          sleep 10
+
+      - name: Manage User Group
+        run: |
+          USER_GROUP="${{ github.event.inputs.user_group }}"
+          echo "Managing user group: $USER_GROUP"
+          
+          mkdir -p users/$USER_GROUP
+          
+          # Create user management script
+          cat > users/$USER_GROUP/manage.sh << 'EOF'
+          #!/bin/bash
+          
+          USER_GROUP="$1"
+          ACTION="$2"
+          USER_ID="$3"
+          
+          case $ACTION in
+            "add")
+              echo "Adding user $USER_ID to group $USER_GROUP"
+              echo "$USER_ID:$(date -Iseconds):active" >> users/$USER_GROUP/members.txt
+              ;;
+            "remove")
+              echo "Removing user $USER_ID from group $USER_GROUP"
+              sed -i "/^$USER_ID:/d" users/$USER_GROUP/members.txt
+              ;;
+            "list")
+              echo "Members of group $USER_GROUP:"
+              cat users/$USER_GROUP/members.txt 2>/dev/null || echo "No members found"
+              ;;
+          esac
+          EOF
+          
+          chmod +x users/$USER_GROUP/manage.sh
+          
+          # Upload user management tools
+          USER_MGMT_HASH=$(ipfs add -r -q users | tail -1)
+          echo "User management system uploaded: $USER_MGMT_HASH"
+          ipfs pin add $USER_MGMT_HASH

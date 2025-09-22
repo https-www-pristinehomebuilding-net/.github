@@ -1,0 +1,44 @@
+{
+  "catalog_info": {
+    "version": "1.0.0",
+    "created": "2024-01-01T00:00:00Z",
+    "description": "Building materials catalog for construction and home building projects",
+    "maintainer": "Pristine Home Building"
+  },
+  "categories": {
+    "lumber": {
+      "description": "Wood materials for framing and construction",
+      "subcategories": ["framing_lumber", "engineered_lumber", "finish_lumber", "specialty_lumber"]
+    },
+    "concrete": {
+      "description": "Concrete products and related materials",
+      "subcategories": ["ready_mix", "bagged_mix", "additives", "reinforcement"]
+    },
+    "steel": {
+      "description": "Steel products for construction",
+      "subcategories": ["structural_steel", "rebar", "fasteners", "sheet_metal"]
+    },
+    "insulation": {
+      "description": "Thermal and acoustic insulation materials",
+      "subcategories": ["fiberglass", "foam", "reflective", "natural"]
+    },
+    "roofing": {
+      "description": "Roofing materials and components",
+      "subcategories": ["shingles", "metal_roofing", "underlayment", "flashing"]
+    },
+    "siding": {
+      "description": "Exterior siding materials",
+      "subcategories": ["vinyl", "wood", "fiber_cement", "metal"]
+    }
+  },
+  "tracking_attributes": [
+    "material_type",
+    "dimensions", 
+    "grade",
+    "price_per_unit",
+    "supplier",
+    "availability",
+    "lead_time",
+    "sustainability_rating"
+  ]
+}

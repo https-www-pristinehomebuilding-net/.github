@@ -1,0 +1,84 @@
+{
+  "lumber_products": {
+    "douglas_fir_2x4": {
+      "id": "LBR001",
+      "name": "Douglas Fir 2x4x8",
+      "category": "lumber",
+      "subcategory": "framing_lumber",
+      "specifications": {
+        "species": "Douglas Fir",
+        "grade": "Construction Grade",
+        "dimensions": "1.5\" x 3.5\" x 8'",
+        "moisture_content": "19% max",
+        "treatment": "Kiln Dried"
+      },
+      "pricing": {
+        "unit": "linear_foot",
+        "base_price": 3.25,
+        "bulk_discount": {
+          "100_pieces": 0.15,
+          "500_pieces": 0.25,
+          "1000_pieces": 0.35
+        }
+      },
+      "sustainability": {
+        "certification": "FSC Certified",
+        "carbon_footprint": "low",
+        "renewable": true
+      }
+    },
+    "engineered_lumber_lvl": {
+      "id": "LBR002", 
+      "name": "LVL Beam 1.75\" x 9.25\"",
+      "category": "lumber",
+      "subcategory": "engineered_lumber",
+      "specifications": {
+        "type": "Laminated Veneer Lumber",
+        "dimensions": "1.75\" x 9.25\" x various",
+        "span_rating": "up_to_20_feet",
+        "load_capacity": "high"
+      },
+      "pricing": {
+        "unit": "linear_foot",
+        "base_price": 12.50
+      }
+    }
+  },
+  "steel_products": {
+    "rebar_grade_60": {
+      "id": "STL001",
+      "name": "#4 Rebar Grade 60",
+      "category": "steel", 
+      "subcategory": "rebar",
+      "specifications": {
+        "diameter": "0.5 inches",
+        "grade": "Grade 60",
+        "yield_strength": "60,000 psi",
+        "length": "20 feet standard"
+      },
+      "pricing": {
+        "unit": "linear_foot",
+        "base_price": 0.85
+      }
+    }
+  },
+  "concrete_products": {
+    "ready_mix_3000psi": {
+      "id": "CON001",
+      "name": "Ready Mix Concrete 3000 PSI",
+      "category": "concrete",
+      "subcategory": "ready_mix",
+      "specifications": {
+        "compressive_strength": "3000 psi",
+        "slump": "4-6 inches",
+        "aggregate_size": "3/4 inch max"
+      },
+      "pricing": {
+        "unit": "cubic_yard",
+        "base_price": 125.00,
+        "delivery_fee": 75.00,
+        "minimum_order": "1 cubic yard"
+      }
+    }
+  }
+}

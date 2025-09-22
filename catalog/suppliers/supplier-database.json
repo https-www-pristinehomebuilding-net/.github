@@ -1,0 +1,90 @@
+{
+  "suppliers": {
+    "premier_lumber_co": {
+      "id": "SUP001",
+      "name": "Premier Lumber Co.",
+      "type": "lumber_supplier",
+      "contact": {
+        "address": "1234 Timber Lane, Seattle, WA 98101",
+        "phone": "(206) 555-0123",
+        "email": "orders@premierlumber.com",
+        "website": "https://premierlumber.com"
+      },
+      "capabilities": {
+        "materials": ["douglas_fir", "cedar", "pine", "engineered_lumber"],
+        "delivery_radius": "200 miles",
+        "minimum_order": 500.00,
+        "lead_time_days": 3,
+        "custom_cutting": true,
+        "certification": ["FSC", "SFI"]
+      },
+      "performance": {
+        "quality_rating": 4.8,
+        "delivery_rating": 4.6,
+        "price_competitiveness": "medium-high",
+        "payment_terms": "Net 30"
+      }
+    },
+    "industrial_steel_solutions": {
+      "id": "SUP002",
+      "name": "Industrial Steel Solutions",
+      "type": "steel_supplier", 
+      "contact": {
+        "address": "5678 Steel Drive, Chicago, IL 60601",
+        "phone": "(312) 555-0456",
+        "email": "sales@industrialsteel.com",
+        "website": "https://industrialsteel.com"
+      },
+      "capabilities": {
+        "materials": ["structural_steel", "rebar", "sheet_metal", "fasteners"],
+        "delivery_radius": "500 miles",
+        "minimum_order": 1000.00,
+        "lead_time_days": 7,
+        "custom_fabrication": true,
+        "certification": ["AISC", "AWS"]
+      },
+      "performance": {
+        "quality_rating": 4.9,
+        "delivery_rating": 4.4,
+        "price_competitiveness": "medium",
+        "payment_terms": "Net 45"
+      }
+    },
+    "megamix_concrete": {
+      "id": "SUP003",
+      "name": "MegaMix Concrete",
+      "type": "concrete_supplier",
+      "contact": {
+        "address": "9012 Concrete Blvd, Phoenix, AZ 85001", 
+        "phone": "(602) 555-0789",
+        "email": "dispatch@megamixconcrete.com",
+        "website": "https://megamixconcrete.com"
+      },
+      "capabilities": {
+        "materials": ["ready_mix", "decorative_concrete", "high_strength", "specialty_mixes"],
+        "delivery_radius": "50 miles",
+        "minimum_order": 300.00,
+        "lead_time_days": 1,
+        "saturday_delivery": true,
+        "certification": ["NRMCA"]
+      },
+      "performance": {
+        "quality_rating": 4.6,
+        "delivery_rating": 4.8,
+        "price_competitiveness": "high",
+        "payment_terms": "Net 15"
+      }
+    }
+  },
+  "supplier_categories": {
+    "lumber_suppliers": ["premier_lumber_co"],
+    "steel_suppliers": ["industrial_steel_solutions"],
+    "concrete_suppliers": ["megamix_concrete"]
+  },
+  "evaluation_criteria": {
+    "quality_weight": 0.35,
+    "price_weight": 0.30,
+    "delivery_weight": 0.20,
+    "reliability_weight": 0.15
+  }
+}

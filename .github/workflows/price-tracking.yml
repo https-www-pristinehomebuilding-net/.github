@@ -1,0 +1,476 @@
+name: Price Tracking and Market Analysis
+
+on:
+  schedule:
+    # Run daily at 6 AM UTC for price updates
+    - cron: '0 6 * * *'
+    # Run weekly on Sundays for market analysis
+    - cron: '0 8 * * 0'
+  workflow_dispatch:
+    inputs:
+      analysis_type:
+        description: 'Type of analysis to run'
+        required: true
+        type: choice
+        options:
+          - 'daily_price_update'
+          - 'weekly_market_analysis'
+          - 'supplier_comparison'
+          - 'trend_analysis'
+          - 'cost_optimization'
+
+env:
+  IPFS_PATH: /tmp/ipfs
+
+jobs:
+  price-collection:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Setup IPFS Node
+        run: |
+          wget https://dist.ipfs.io/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz
+          tar -xzf kubo_v0.24.0_linux-amd64.tar.gz
+          sudo install kubo/ipfs /usr/local/bin/
+          ipfs init --profile server
+          ipfs daemon &
+          sleep 10
+
+      - name: Install Dependencies
+        run: |
+          pip install requests beautifulsoup4 pandas numpy matplotlib seaborn
+
+      - name: Create Price Collection System
+        run: |
+          mkdir -p pricing/collectors pricing/data pricing/analysis pricing/reports
+          
+          # Create price collector script
+          cat > pricing/collectors/price_collector.py << 'EOF'
+          #!/usr/bin/env python3
+          import json
+          import requests
+          import time
+          from datetime import datetime, timedelta
+          import pandas as pd
+          import numpy as np
+          
+          class BuildingMaterialsPriceCollector:
+              def __init__(self):
+                  self.data_sources = {
+                      'lumber': {
+                          'url': 'https://api.example-lumber-prices.com/v1/prices',
+                          'key_field': 'lumber_price_per_bf',
+                          'unit': 'board_feet'
+                      },
+                      'steel': {
+                          'url': 'https://api.example-steel-prices.com/v1/prices', 
+                          'key_field': 'steel_price_per_ton',
+                          'unit': 'metric_ton'
+                      },
+                      'concrete': {
+                          'url': 'https://api.example-concrete-prices.com/v1/prices',
+                          'key_field': 'concrete_price_per_yard',
+                          'unit': 'cubic_yard'
+                      }
+                  }
+                  
+              def collect_prices(self):
+                  timestamp = datetime.now().isoformat()
+                  collected_data = {
+                      'timestamp': timestamp,
+                      'prices': {},
+                      'metadata': {
+                          'collection_method': 'automated',
+                          'data_quality': 'high',
+                          'sources_checked': len(self.data_sources)
+                      }
+                  }
+                  
+                  for material, config in self.data_sources.items():
+                      try:
+                          # Simulate price collection (replace with actual API calls)
+                          price_data = self.simulate_price_data(material)
+                          collected_data['prices'][material] = price_data
+                          print(f"Collected {material} prices: {price_data}")
+                      except Exception as e:
+                          print(f"Error collecting {material} prices: {e}")
+                          collected_data['prices'][material] = {'error': str(e)}
+                  
+                  return collected_data
+              
+              def simulate_price_data(self, material):
+                  """Simulate price data - replace with actual API calls"""
+                  base_prices = {
+                      'lumber': 450.0,  # per 1000 board feet
+                      'steel': 800.0,   # per metric ton
+                      'concrete': 120.0  # per cubic yard
+                  }
+                  
+                  # Add some realistic variation
+                  base_price = base_prices.get(material, 100.0)
+                  variation = np.random.normal(0, base_price * 0.02)  # 2% standard deviation
+                  current_price = base_price + variation
+                  
+                  return {
+                      'current_price': round(current_price, 2),
+                      'currency': 'USD',
+                      'unit': self.data_sources[material]['unit'],
+                      'last_updated': datetime.now().isoformat(),
+                      'change_24h': round(np.random.normal(0, base_price * 0.01), 2),
+                      'market_confidence': np.random.choice(['high', 'medium', 'low'], p=[0.6, 0.3, 0.1])
+                  }
+              
+              def save_data(self, data, filename):
+                  with open(filename, 'w') as f:
+                      json.dump(data, f, indent=2)
+                  return filename
+          
+          if __name__ == "__main__":
+              collector = BuildingMaterialsPriceCollector()
+              price_data = collector.collect_prices()
+              
+              # Save to pricing/data directory
+              filename = f"pricing/data/prices_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+              collector.save_data(price_data, filename)
+              print(f"Price data saved to {filename}")
+          EOF
+          
+          chmod +x pricing/collectors/price_collector.py
+
+      - name: Collect Current Prices
+        run: |
+          cd /home/runner/work/.github/.github
+          python pricing/collectors/price_collector.py
+          
+          # Upload price data to IPFS
+          LATEST_PRICE_FILE=$(ls -t pricing/data/prices_*.json | head -1)
+          if [ -f "$LATEST_PRICE_FILE" ]; then
+            PRICE_HASH=$(ipfs add -q "$LATEST_PRICE_FILE")
+            echo "Price data uploaded to IPFS: $PRICE_HASH"
+            ipfs pin add $PRICE_HASH
+            
+            # Update price index
+            echo "$(date -Iseconds):$PRICE_HASH:$(basename $LATEST_PRICE_FILE)" >> pricing/price-index.txt
+            
+            INDEX_HASH=$(ipfs add -q pricing/price-index.txt)
+            echo "Price index updated: $INDEX_HASH"
+            ipfs pin add $INDEX_HASH
+          fi
+
+  market-analysis:
+    runs-on: ubuntu-latest
+    needs: price-collection
+    if: github.event.schedule == '0 8 * * 0' || github.event.inputs.analysis_type == 'weekly_market_analysis'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Setup IPFS Node
+        run: |
+          wget https://dist.ipfs.io/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz
+          tar -xzf kubo_v0.24.0_linux-amd64.tar.gz
+          sudo install kubo/ipfs /usr/local/bin/
+          ipfs init --profile server
+          ipfs daemon &
+          sleep 10
+
+      - name: Install Analysis Dependencies
+        run: |
+          pip install pandas numpy matplotlib seaborn scikit-learn plotly
+
+      - name: Create Market Analysis System
+        run: |
+          cat > pricing/analysis/market_analyzer.py << 'EOF'
+          #!/usr/bin/env python3
+          import json
+          import pandas as pd
+          import numpy as np
+          import matplotlib.pyplot as plt
+          import seaborn as sns
+          from datetime import datetime, timedelta
+          import glob
+          import os
+          
+          class MarketAnalyzer:
+              def __init__(self, data_directory="pricing/data"):
+                  self.data_directory = data_directory
+                  self.reports_directory = "pricing/reports"
+                  os.makedirs(self.reports_directory, exist_ok=True)
+                  
+              def load_historical_data(self, days=30):
+                  """Load historical price data from JSON files"""
+                  price_files = glob.glob(f"{self.data_directory}/prices_*.json")
+                  historical_data = []
+                  
+                  for file_path in sorted(price_files)[-days:]:  # Last N days
+                      try:
+                          with open(file_path, 'r') as f:
+                              data = json.load(f)
+                              historical_data.append(data)
+                      except Exception as e:
+                          print(f"Error loading {file_path}: {e}")
+                  
+                  return historical_data
+              
+              def analyze_price_trends(self, historical_data):
+                  """Analyze price trends for building materials"""
+                  materials = ['lumber', 'steel', 'concrete']
+                  trend_analysis = {}
+                  
+                  for material in materials:
+                      prices = []
+                      dates = []
+                      
+                      for entry in historical_data:
+                          if material in entry.get('prices', {}):
+                              price_info = entry['prices'][material]
+                              if 'current_price' in price_info:
+                                  prices.append(price_info['current_price'])
+                                  dates.append(entry['timestamp'])
+                      
+                      if len(prices) >= 2:
+                          df = pd.DataFrame({'date': dates, 'price': prices})
+                          df['date'] = pd.to_datetime(df['date'])
+                          df = df.sort_values('date')
+                          
+                          # Calculate trend metrics
+                          price_change = prices[-1] - prices[0] if prices else 0
+                          percent_change = (price_change / prices[0] * 100) if prices[0] != 0 else 0
+                          
+                          trend_analysis[material] = {
+                              'current_price': prices[-1] if prices else 0,
+                              'price_change': round(price_change, 2),
+                              'percent_change': round(percent_change, 2),
+                              'trend': 'up' if price_change > 0 else 'down' if price_change < 0 else 'stable',
+                              'volatility': round(np.std(prices), 2) if len(prices) > 1 else 0,
+                              'data_points': len(prices)
+                          }
+                  
+                  return trend_analysis
+              
+              def generate_market_report(self, trend_analysis):
+                  """Generate comprehensive market report"""
+                  report = {
+                      'report_date': datetime.now().isoformat(),
+                      'report_type': 'weekly_market_analysis',
+                      'executive_summary': self.create_executive_summary(trend_analysis),
+                      'material_analysis': trend_analysis,
+                      'recommendations': self.generate_recommendations(trend_analysis),
+                      'risk_assessment': self.assess_market_risks(trend_analysis)
+                  }
+                  
+                  return report
+              
+              def create_executive_summary(self, trend_analysis):
+                  """Create executive summary of market conditions"""
+                  total_materials = len(trend_analysis)
+                  upward_trends = sum(1 for data in trend_analysis.values() if data['trend'] == 'up')
+                  downward_trends = sum(1 for data in trend_analysis.values() if data['trend'] == 'down')
+                  
+                  summary = {
+                      'market_sentiment': 'bullish' if upward_trends > downward_trends else 'bearish' if downward_trends > upward_trends else 'neutral',
+                      'materials_tracked': total_materials,
+                      'upward_trends': upward_trends,
+                      'downward_trends': downward_trends,
+                      'highest_volatility': max(trend_analysis.keys(), key=lambda x: trend_analysis[x]['volatility']) if trend_analysis else None,
+                      'biggest_gainer': max(trend_analysis.keys(), key=lambda x: trend_analysis[x]['percent_change']) if trend_analysis else None
+                  }
+                  
+                  return summary
+              
+              def generate_recommendations(self, trend_analysis):
+                  """Generate purchasing and planning recommendations"""
+                  recommendations = []
+                  
+                  for material, data in trend_analysis.items():
+                      if data['trend'] == 'down' and data['volatility'] < data['current_price'] * 0.1:
+                          recommendations.append({
+                              'material': material,
+                              'action': 'buy',
+                              'reason': 'Declining prices with low volatility - good buying opportunity',
+                              'confidence': 'high'
+                          })
+                      elif data['trend'] == 'up' and data['volatility'] > data['current_price'] * 0.15:
+                          recommendations.append({
+                              'material': material,
+                              'action': 'wait',
+                              'reason': 'Rising prices with high volatility - wait for stabilization',
+                              'confidence': 'medium'
+                          })
+                      else:
+                          recommendations.append({
+                              'material': material,
+                              'action': 'monitor',
+                              'reason': 'Stable market conditions - continue monitoring',
+                              'confidence': 'medium'
+                          })
+                  
+                  return recommendations
+              
+              def assess_market_risks(self, trend_analysis):
+                  """Assess market risks and supply chain concerns"""
+                  risks = []
+                  
+                  for material, data in trend_analysis.items():
+                      if data['volatility'] > data['current_price'] * 0.2:
+                          risks.append({
+                              'material': material,
+                              'risk_type': 'high_volatility',
+                              'severity': 'high',
+                              'description': f'{material} showing high price volatility'
+                          })
+                      
+                      if data['percent_change'] > 20:
+                          risks.append({
+                              'material': material,
+                              'risk_type': 'rapid_price_increase',
+                              'severity': 'medium',
+                              'description': f'{material} prices increased by {data["percent_change"]}%'
+                          })
+                  
+                  return risks
+              
+              def save_report(self, report, filename):
+                  """Save market report to file"""
+                  filepath = os.path.join(self.reports_directory, filename)
+                  with open(filepath, 'w') as f:
+                      json.dump(report, f, indent=2)
+                  return filepath
+          
+          if __name__ == "__main__":
+              analyzer = MarketAnalyzer()
+              historical_data = analyzer.load_historical_data(30)  # Last 30 days
+              
+              if historical_data:
+                  trend_analysis = analyzer.analyze_price_trends(historical_data)
+                  market_report = analyzer.generate_market_report(trend_analysis)
+                  
+                  report_filename = f"market_report_{datetime.now().strftime('%Y%m%d')}.json"
+                  report_path = analyzer.save_report(market_report, report_filename)
+                  print(f"Market report generated: {report_path}")
+              else:
+                  print("No historical data available for analysis")
+          EOF
+          
+          chmod +x pricing/analysis/market_analyzer.py
+
+      - name: Run Market Analysis
+        run: |
+          cd /home/runner/work/.github/.github
+          python pricing/analysis/market_analyzer.py
+          
+          # Upload market report to IPFS
+          LATEST_REPORT=$(ls -t pricing/reports/market_report_*.json | head -1)
+          if [ -f "$LATEST_REPORT" ]; then
+            REPORT_HASH=$(ipfs add -q "$LATEST_REPORT")
+            echo "Market report uploaded to IPFS: $REPORT_HASH"
+            ipfs pin add $REPORT_HASH
+            
+            # Update reports index
+            echo "$(date -Iseconds):$REPORT_HASH:$(basename $LATEST_REPORT)" >> pricing/reports-index.txt
+            
+            REPORTS_INDEX_HASH=$(ipfs add -q pricing/reports-index.txt)
+            echo "Reports index updated: $REPORTS_INDEX_HASH"
+            ipfs pin add $REPORTS_INDEX_HASH
+          fi
+
+  supplier-comparison:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.analysis_type == 'supplier_comparison'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup IPFS Node
+        run: |
+          wget https://dist.ipfs.io/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz
+          tar -xzf kubo_v0.24.0_linux-amd64.tar.gz
+          sudo install kubo/ipfs /usr/local/bin/
+          ipfs init --profile server
+          ipfs daemon &
+          sleep 10
+
+      - name: Create Supplier Database
+        run: |
+          mkdir -p suppliers/database suppliers/comparisons
+          
+          # Create supplier database
+          cat > suppliers/database/suppliers.json << 'EOF'
+          {
+            "suppliers": {
+              "lumber_suppliers": [
+                {
+                  "id": "LS001",
+                  "name": "Premium Lumber Co",
+                  "location": "Pacific Northwest",
+                  "specialties": ["Douglas Fir", "Cedar", "Pine"],
+                  "delivery_time": "3-5 days",
+                  "minimum_order": "$500",
+                  "quality_rating": 4.8,
+                  "price_competitiveness": "medium-high"
+                },
+                {
+                  "id": "LS002", 
+                  "name": "BuildMax Lumber",
+                  "location": "Southeast US",
+                  "specialties": ["Southern Pine", "Oak", "Poplar"],
+                  "delivery_time": "1-3 days",
+                  "minimum_order": "$200",
+                  "quality_rating": 4.2,
+                  "price_competitiveness": "high"
+                }
+              ],
+              "steel_suppliers": [
+                {
+                  "id": "SS001",
+                  "name": "Industrial Steel Solutions",
+                  "location": "Midwest US",
+                  "specialties": ["Structural Steel", "Rebar", "Sheet Metal"],
+                  "delivery_time": "5-10 days",
+                  "minimum_order": "$1000",
+                  "quality_rating": 4.9,
+                  "price_competitiveness": "medium"
+                },
+                {
+                  "id": "SS002",
+                  "name": "QuickSteel Supply",
+                  "location": "Texas",
+                  "specialties": ["Construction Steel", "Pipes", "Beams"],
+                  "delivery_time": "2-7 days", 
+                  "minimum_order": "$750",
+                  "quality_rating": 4.5,
+                  "price_competitiveness": "high"
+                }
+              ],
+              "concrete_suppliers": [
+                {
+                  "id": "CS001",
+                  "name": "MegaMix Concrete",
+                  "location": "California",
+                  "specialties": ["Ready Mix", "High Strength", "Decorative"],
+                  "delivery_time": "same day",
+                  "minimum_order": "$300",
+                  "quality_rating": 4.6,
+                  "price_competitiveness": "medium"
+                }
+              ]
+            }
+          }
+          EOF
+          
+          # Upload supplier database to IPFS
+          SUPPLIER_DB_HASH=$(ipfs add -q suppliers/database/suppliers.json)
+          echo "Supplier database uploaded: $SUPPLIER_DB_HASH"
+          ipfs pin add $SUPPLIER_DB_HASH

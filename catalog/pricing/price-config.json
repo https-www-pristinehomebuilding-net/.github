@@ -1,0 +1,79 @@
+{
+  "pricing_configuration": {
+    "update_frequency": "daily",
+    "price_sources": [
+      "supplier_apis",
+      "market_indices", 
+      "manual_entry"
+    ],
+    "currency": "USD",
+    "tax_included": false
+  },
+  "market_regions": {
+    "pacific_northwest": {
+      "states": ["WA", "OR", "ID"],
+      "lumber_modifier": 1.05,
+      "concrete_modifier": 0.95,
+      "steel_modifier": 1.02
+    },
+    "southeast": {
+      "states": ["FL", "GA", "SC", "NC", "TN", "AL", "MS"],
+      "lumber_modifier": 0.92,
+      "concrete_modifier": 1.08,
+      "steel_modifier": 0.98
+    },
+    "midwest": {
+      "states": ["IL", "IN", "OH", "MI", "WI"],
+      "lumber_modifier": 0.98,
+      "concrete_modifier": 1.02,
+      "steel_modifier": 1.05
+    }
+  },
+  "current_prices": {
+    "last_updated": "2024-01-15T08:00:00Z",
+    "materials": {
+      "douglas_fir_2x4": {
+        "base_price": 3.25,
+        "regional_prices": {
+          "pacific_northwest": 3.41,
+          "southeast": 2.99,
+          "midwest": 3.19
+        },
+        "trend": "stable",
+        "30_day_change": "+2.3%"
+      },
+      "rebar_grade_60": {
+        "base_price": 0.85,
+        "regional_prices": {
+          "pacific_northwest": 0.87,
+          "southeast": 0.83,
+          "midwest": 0.89
+        },
+        "trend": "rising",
+        "30_day_change": "+5.7%"
+      },
+      "ready_mix_3000psi": {
+        "base_price": 125.00,
+        "regional_prices": {
+          "pacific_northwest": 118.75,
+          "southeast": 135.00,
+          "midwest": 127.50
+        },
+        "trend": "declining",
+        "30_day_change": "-1.8%"
+      }
+    }
+  },
+  "price_alerts": {
+    "thresholds": {
+      "significant_change": 5.0,
+      "major_change": 10.0,
+      "critical_change": 20.0
+    },
+    "notification_groups": [
+      "material_managers",
+      "pricing_analysts",
+      "admin"
+    ]
+  }
+}

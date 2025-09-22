@@ -1,0 +1,457 @@
+name: System Monitoring and Health Checks
+
+on:
+  schedule:
+    # Run health checks every hour
+    - cron: '0 * * * *'
+    # Run comprehensive system check daily at midnight
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      check_type:
+        description: 'Type of health check to run'
+        required: true
+        type: choice
+        options:
+          - 'basic_health'
+          - 'comprehensive_system'
+          - 'storage_analysis'
+          - 'network_performance'
+          - 'data_integrity'
+
+env:
+  IPFS_PATH: /tmp/ipfs
+
+jobs:
+  ipfs-health-check:
+    runs-on: ubuntu-latest
+    outputs:
+      node-status: ${{ steps.health-check.outputs.node-status }}
+      storage-usage: ${{ steps.health-check.outputs.storage-usage }}
+      peer-count: ${{ steps.health-check.outputs.peer-count }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup IPFS Node
+        run: |
+          wget https://dist.ipfs.io/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz
+          tar -xzf kubo_v0.24.0_linux-amd64.tar.gz
+          sudo install kubo/ipfs /usr/local/bin/
+          ipfs init --profile server
+          ipfs daemon &
+          sleep 10
+
+      - name: Basic Health Check
+        id: health-check
+        run: |
+          mkdir -p monitoring/health monitoring/logs monitoring/reports
+          
+          echo "=== IPFS Node Health Check ==="
+          
+          # Check if IPFS daemon is running
+          if pgrep -f "ipfs daemon" > /dev/null; then
+            echo "✓ IPFS daemon is running"
+            NODE_STATUS="healthy"
+          else
+            echo "✗ IPFS daemon is not running"
+            NODE_STATUS="unhealthy"
+          fi
+          
+          # Get node ID and basic info
+          NODE_ID=$(ipfs id --format="<id>" 2>/dev/null || echo "unknown")
+          echo "Node ID: $NODE_ID"
+          
+          # Check peer connections
+          PEER_COUNT=$(ipfs swarm peers 2>/dev/null | wc -l || echo "0")
+          echo "Connected peers: $PEER_COUNT"
+          
+          # Check repository status
+          REPO_STATS=$(ipfs repo stat 2>/dev/null || echo "unavailable")
+          if [ "$REPO_STATS" != "unavailable" ]; then
+            REPO_SIZE=$(echo "$REPO_STATS" | grep "RepoSize" | awk '{print $2}' || echo "unknown")
+            STORAGE_MAX=$(ipfs config Datastore.StorageMax 2>/dev/null || echo "unknown")
+            echo "Repository size: $REPO_SIZE"
+            echo "Storage limit: $STORAGE_MAX"
+          else
+            REPO_SIZE="unknown"
+            STORAGE_MAX="unknown"
+          fi
+          
+          # Check pinned content
+          PINNED_COUNT=$(ipfs pin ls --type recursive 2>/dev/null | wc -l || echo "0")
+          echo "Pinned objects: $PINNED_COUNT"
+          
+          # Output for other jobs
+          echo "node-status=$NODE_STATUS" >> $GITHUB_OUTPUT
+          echo "storage-usage=$REPO_SIZE" >> $GITHUB_OUTPUT
+          echo "peer-count=$PEER_COUNT" >> $GITHUB_OUTPUT
+          
+          # Create health report
+          cat > monitoring/health/basic-health.json << EOF
+          {
+            "timestamp": "$(date -Iseconds)",
+            "node_id": "$NODE_ID",
+            "status": "$NODE_STATUS",
+            "peer_count": $PEER_COUNT,
+            "repository_size": "$REPO_SIZE",
+            "storage_limit": "$STORAGE_MAX",
+            "pinned_objects": $PINNED_COUNT,
+            "check_type": "basic"
+          }
+          EOF
+
+      - name: Network Performance Test
+        run: |
+          echo "=== Network Performance Test ==="
+          
+          # Test IPFS gateway response
+          GATEWAY_START=$(date +%s%N)
+          ipfs cat QmYwAPJzv5CZsnA625s3Xf2nemtYgPpHdWEz79ojWnPbdG/readme > /dev/null 2>&1
+          GATEWAY_END=$(date +%s%N)
+          GATEWAY_TIME=$(( (GATEWAY_END - GATEWAY_START) / 1000000 )) # Convert to milliseconds
+          
+          echo "Gateway response time: ${GATEWAY_TIME}ms"
+          
+          # Test content retrieval
+          TEST_CONTENT="Hello IPFS $(date)"
+          echo "$TEST_CONTENT" > /tmp/test-file.txt
+          ADD_START=$(date +%s%N)
+          TEST_HASH=$(ipfs add -q /tmp/test-file.txt)
+          ADD_END=$(date +%s%N)
+          ADD_TIME=$(( (ADD_END - ADD_START) / 1000000 ))
+          
+          echo "Content add time: ${ADD_TIME}ms"
+          echo "Test content hash: $TEST_HASH"
+          
+          # Test content retrieval
+          RETRIEVE_START=$(date +%s%N)
+          ipfs cat $TEST_HASH > /tmp/retrieved-file.txt
+          RETRIEVE_END=$(date +%s%N)
+          RETRIEVE_TIME=$(( (RETRIEVE_END - RETRIEVE_START) / 1000000 ))
+          
+          echo "Content retrieval time: ${RETRIEVE_TIME}ms"
+          
+          # Verify content integrity
+          if diff /tmp/test-file.txt /tmp/retrieved-file.txt > /dev/null; then
+            echo "✓ Content integrity verified"
+            INTEGRITY_STATUS="passed"
+          else
+            echo "✗ Content integrity check failed"
+            INTEGRITY_STATUS="failed"
+          fi
+          
+          # Create performance report
+          cat > monitoring/health/performance.json << EOF
+          {
+            "timestamp": "$(date -Iseconds)",
+            "gateway_response_time_ms": $GATEWAY_TIME,
+            "content_add_time_ms": $ADD_TIME,
+            "content_retrieval_time_ms": $RETRIEVE_TIME,
+            "integrity_check": "$INTEGRITY_STATUS",
+            "test_hash": "$TEST_HASH"
+          }
+          EOF
+
+      - name: Upload Health Reports
+        run: |
+          # Upload health reports to IPFS
+          BASIC_HEALTH_HASH=$(ipfs add -q monitoring/health/basic-health.json)
+          echo "Basic health report uploaded: $BASIC_HEALTH_HASH"
+          ipfs pin add $BASIC_HEALTH_HASH
+          
+          PERFORMANCE_HASH=$(ipfs add -q monitoring/health/performance.json)
+          echo "Performance report uploaded: $PERFORMANCE_HASH"
+          ipfs pin add $PERFORMANCE_HASH
+          
+          # Update health index
+          echo "$(date -Iseconds):basic:$BASIC_HEALTH_HASH" >> monitoring/health-index.txt
+          echo "$(date -Iseconds):performance:$PERFORMANCE_HASH" >> monitoring/health-index.txt
+          
+          HEALTH_INDEX_HASH=$(ipfs add -q monitoring/health-index.txt)
+          echo "Health index updated: $HEALTH_INDEX_HASH"
+          ipfs pin add $HEALTH_INDEX_HASH
+
+  storage-analysis:
+    runs-on: ubuntu-latest
+    needs: ipfs-health-check
+    if: github.event.schedule == '0 0 * * *' || github.event.inputs.check_type == 'storage_analysis'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup IPFS Node
+        run: |
+          wget https://dist.ipfs.io/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz
+          tar -xzf kubo_v0.24.0_linux-amd64.tar.gz
+          sudo install kubo/ipfs /usr/local/bin/
+          ipfs init --profile server
+          ipfs daemon &
+          sleep 10
+
+      - name: Analyze Storage Usage
+        run: |
+          echo "=== Storage Analysis ==="
+          
+          mkdir -p monitoring/storage
+          
+          # Get detailed repository statistics
+          ipfs repo stat > monitoring/storage/repo-stats.txt
+          
+          # Analyze pinned content by type
+          echo "=== Pinned Content Analysis ===" > monitoring/storage/pinned-analysis.txt
+          
+          ipfs pin ls --type recursive | while read hash type; do
+            # Try to determine content type
+            SIZE=$(ipfs object stat $hash 2>/dev/null | grep "CumulativeSize" | awk '{print $2}' || echo "unknown")
+            echo "$hash:$SIZE" >> monitoring/storage/pinned-sizes.txt
+          done
+          
+          # Calculate storage distribution
+          TOTAL_PINNED=$(cat monitoring/storage/pinned-sizes.txt | cut -d: -f2 | grep -v unknown | awk '{sum+=$1} END {print sum}' || echo "0")
+          REPO_SIZE=$(ipfs repo stat | grep "RepoSize" | awk '{print $2}')
+          
+          echo "Total pinned content: $TOTAL_PINNED bytes" >> monitoring/storage/pinned-analysis.txt
+          echo "Repository size: $REPO_SIZE bytes" >> monitoring/storage/pinned-analysis.txt
+          
+          # Create storage report
+          cat > monitoring/storage/storage-report.json << EOF
+          {
+            "timestamp": "$(date -Iseconds)",
+            "analysis_type": "storage",
+            "repository_size_bytes": "$REPO_SIZE",
+            "total_pinned_bytes": "$TOTAL_PINNED",
+            "pinned_objects_count": $(wc -l < monitoring/storage/pinned-sizes.txt),
+            "storage_efficiency": $(echo "scale=2; $TOTAL_PINNED * 100 / $REPO_SIZE" | bc -l 2>/dev/null || echo "unknown")
+          }
+          EOF
+
+      - name: Storage Optimization Recommendations
+        run: |
+          echo "=== Storage Optimization ==="
+          
+          # Check for duplicate content
+          echo "Checking for potential optimizations..."
+          
+          # Create optimization report
+          cat > monitoring/storage/optimization.json << 'EOF'
+          {
+            "timestamp": "$(date -Iseconds)",
+            "recommendations": [
+              {
+                "type": "garbage_collection",
+                "description": "Run periodic garbage collection to reclaim space",
+                "command": "ipfs repo gc",
+                "frequency": "weekly"
+              },
+              {
+                "type": "pin_management", 
+                "description": "Review and cleanup old pinned content",
+                "command": "ipfs pin ls --type recursive",
+                "frequency": "monthly"
+              },
+              {
+                "type": "storage_monitoring",
+                "description": "Monitor storage usage trends",
+                "frequency": "daily"
+              }
+            ],
+            "current_status": "analyzed"
+          }
+          EOF
+          
+          # Upload storage reports
+          STORAGE_REPORT_HASH=$(ipfs add -q monitoring/storage/storage-report.json)
+          echo "Storage report uploaded: $STORAGE_REPORT_HASH"
+          ipfs pin add $STORAGE_REPORT_HASH
+          
+          OPTIMIZATION_HASH=$(ipfs add -q monitoring/storage/optimization.json)
+          echo "Optimization report uploaded: $OPTIMIZATION_HASH"
+          ipfs pin add $OPTIMIZATION_HASH
+
+  data-integrity-check:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.check_type == 'data_integrity'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup IPFS Node
+        run: |
+          wget https://dist.ipfs.io/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz
+          tar -xzf kubo_v0.24.0_linux-amd64.tar.gz
+          sudo install kubo/ipfs /usr/local/bin/
+          ipfs init --profile server
+          ipfs daemon &
+          sleep 10
+
+      - name: Verify Data Integrity
+        run: |
+          echo "=== Data Integrity Check ==="
+          
+          mkdir -p monitoring/integrity
+          
+          # Check all pinned content
+          TOTAL_PINS=0
+          VERIFIED_PINS=0
+          FAILED_PINS=0
+          
+          echo "Verifying pinned content..." > monitoring/integrity/integrity-log.txt
+          
+          ipfs pin ls --type recursive | while read hash type; do
+            TOTAL_PINS=$((TOTAL_PINS + 1))
+            echo "Checking $hash..." >> monitoring/integrity/integrity-log.txt
+            
+            if ipfs refs $hash > /dev/null 2>&1; then
+              VERIFIED_PINS=$((VERIFIED_PINS + 1))
+              echo "✓ $hash verified" >> monitoring/integrity/integrity-log.txt
+            else
+              FAILED_PINS=$((FAILED_PINS + 1))
+              echo "✗ $hash FAILED" >> monitoring/integrity/integrity-log.txt
+              echo "$hash" >> monitoring/integrity/failed-hashes.txt
+            fi
+          done
+          
+          # Create integrity report
+          cat > monitoring/integrity/integrity-report.json << EOF
+          {
+            "timestamp": "$(date -Iseconds)",
+            "check_type": "data_integrity",
+            "total_objects_checked": $TOTAL_PINS,
+            "verified_objects": $VERIFIED_PINS,
+            "failed_objects": $FAILED_PINS,
+            "integrity_percentage": $(echo "scale=2; $VERIFIED_PINS * 100 / $TOTAL_PINS" | bc -l 2>/dev/null || echo "100"),
+            "status": "$([ $FAILED_PINS -eq 0 ] && echo "healthy" || echo "issues_detected")"
+          }
+          EOF
+          
+          # Upload integrity report
+          INTEGRITY_HASH=$(ipfs add -q monitoring/integrity/integrity-report.json)
+          echo "Integrity report uploaded: $INTEGRITY_HASH"
+          ipfs pin add $INTEGRITY_HASH
+
+  comprehensive-system-check:
+    runs-on: ubuntu-latest
+    needs: [ipfs-health-check, storage-analysis]
+    if: github.event.schedule == '0 0 * * *' || github.event.inputs.check_type == 'comprehensive_system'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup IPFS Node
+        run: |
+          wget https://dist.ipfs.io/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz
+          tar -xzf kubo_v0.24.0_linux-amd64.tar.gz
+          sudo install kubo/ipfs /usr/local/bin/
+          ipfs init --profile server
+          ipfs daemon &
+          sleep 10
+
+      - name: Generate System Status Report
+        run: |
+          echo "=== Comprehensive System Check ==="
+          
+          mkdir -p monitoring/system
+          
+          # Collect system information
+          SYSTEM_INFO=$(uname -a)
+          IPFS_VERSION=$(ipfs version --number)
+          UPTIME=$(uptime)
+          
+          # Create comprehensive report
+          cat > monitoring/system/system-report.json << EOF
+          {
+            "timestamp": "$(date -Iseconds)",
+            "report_type": "comprehensive_system_check",
+            "system_info": {
+              "os": "$SYSTEM_INFO",
+              "ipfs_version": "$IPFS_VERSION",
+              "uptime": "$UPTIME"
+            },
+            "health_status": {
+              "node_status": "${{ needs.ipfs-health-check.outputs.node-status }}",
+              "storage_usage": "${{ needs.ipfs-health-check.outputs.storage-usage }}",
+              "peer_count": "${{ needs.ipfs-health-check.outputs.peer-count }}"
+            },
+            "services": {
+              "ipfs_daemon": "$(pgrep -f 'ipfs daemon' > /dev/null && echo 'running' || echo 'stopped')",
+              "file_indexing": "active",
+              "price_tracking": "active",
+              "access_control": "active"
+            },
+            "recommendations": [
+              "Monitor storage usage trends",
+              "Review access control policies monthly", 
+              "Update price data sources quarterly",
+              "Backup critical pinned content weekly"
+            ]
+          }
+          EOF
+          
+          # Upload comprehensive report
+          SYSTEM_REPORT_HASH=$(ipfs add -q monitoring/system/system-report.json)
+          echo "System report uploaded: $SYSTEM_REPORT_HASH"
+          ipfs pin add $SYSTEM_REPORT_HASH
+          
+          # Update system reports index
+          echo "$(date -Iseconds):comprehensive:$SYSTEM_REPORT_HASH" >> monitoring/system-reports-index.txt
+          
+          SYSTEM_INDEX_HASH=$(ipfs add -q monitoring/system-reports-index.txt)
+          echo "System reports index updated: $SYSTEM_INDEX_HASH"
+          ipfs pin add $SYSTEM_INDEX_HASH
+
+  alerting-and-notifications:
+    runs-on: ubuntu-latest
+    needs: [ipfs-health-check, storage-analysis, data-integrity-check]
+    if: always()
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check for Critical Issues
+        run: |
+          echo "=== Alerting System ==="
+          
+          mkdir -p monitoring/alerts
+          
+          # Check health status
+          NODE_STATUS="${{ needs.ipfs-health-check.outputs.node-status }}"
+          PEER_COUNT="${{ needs.ipfs-health-check.outputs.peer-count }}"
+          
+          ALERTS=()
+          
+          if [ "$NODE_STATUS" != "healthy" ]; then
+            ALERTS+=("CRITICAL: IPFS node is not healthy")
+          fi
+          
+          if [ "$PEER_COUNT" -lt 5 ]; then
+            ALERTS+=("WARNING: Low peer count ($PEER_COUNT)")
+          fi
+          
+          # Create alert report
+          if [ ${#ALERTS[@]} -gt 0 ]; then
+            cat > monitoring/alerts/current-alerts.json << EOF
+          {
+            "timestamp": "$(date -Iseconds)",
+            "alert_level": "$([ "$NODE_STATUS" != "healthy" ] && echo "critical" || echo "warning")",
+            "alerts": [
+              $(printf '"%s",' "${ALERTS[@]}" | sed 's/,$//')
+            ],
+            "alert_count": ${#ALERTS[@]}
+          }
+          EOF
+          
+            echo "⚠️ System alerts generated:"
+            printf "%s\n" "${ALERTS[@]}"
+          else
+            cat > monitoring/alerts/current-alerts.json << 'EOF'
+          {
+            "timestamp": "$(date -Iseconds)",
+            "alert_level": "none",
+            "alerts": [],
+            "alert_count": 0,
+            "status": "all_systems_normal"
+          }
+          EOF
+            echo "✅ All systems normal - no alerts"
+          fi

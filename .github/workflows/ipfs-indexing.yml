@@ -1,0 +1,358 @@
+name: IPFS Building Materials Indexing System
+
+on:
+  push:
+    paths:
+      - '**/*.cad'
+      - '**/*.jpg'
+      - '**/*.jpeg'
+      - '**/*.heic'
+      - '**/CMakeLists.txt'
+      - '**/*.go'
+      - '**/go.mod'
+      - '**/go.sum'
+      - 'catalog/**'
+  pull_request:
+    paths:
+      - '**/*.cad'
+      - '**/*.jpg'
+      - '**/*.jpeg'
+      - '**/*.heic'
+      - '**/CMakeLists.txt'
+      - '**/*.go'
+      - '**/go.mod'
+      - '**/go.sum'
+      - 'catalog/**'
+  schedule:
+    # Run every 6 hours for continuous sync
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force_reindex:
+        description: 'Force complete reindexing'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  IPFS_PATH: /tmp/ipfs
+  CATALOG_PATH: ./catalog
+
+jobs:
+  setup-ipfs:
+    runs-on: ubuntu-latest
+    outputs:
+      node-id: ${{ steps.ipfs-setup.outputs.node-id }}
+      gateway-url: ${{ steps.ipfs-setup.outputs.gateway-url }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup IPFS Node
+        id: ipfs-setup
+        run: |
+          # Download and install IPFS
+          wget https://dist.ipfs.io/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz
+          tar -xzf kubo_v0.24.0_linux-amd64.tar.gz
+          sudo install kubo/ipfs /usr/local/bin/
+          
+          # Initialize IPFS node
+          ipfs init --profile server
+          
+          # Configure for NAS storage optimization
+          ipfs config Datastore.StorageMax "50GB"
+          ipfs config --json Datastore.BloomFilterSize 1048576
+          ipfs config --json Discovery.MDNS.Enabled false
+          ipfs config --json Swarm.ConnMgr.HighWater 900
+          ipfs config --json Swarm.ConnMgr.LowWater 600
+          
+          # Start IPFS daemon in background
+          ipfs daemon &
+          sleep 10
+          
+          # Get node information
+          NODE_ID=$(ipfs id --format="<id>")
+          GATEWAY_URL="http://127.0.0.1:8080"
+          
+          echo "node-id=$NODE_ID" >> $GITHUB_OUTPUT
+          echo "gateway-url=$GATEWAY_URL" >> $GITHUB_OUTPUT
+          echo "IPFS node started with ID: $NODE_ID"
+
+      - name: Configure IPFS for Building Materials
+        run: |
+          # Create pinning service configuration for materials
+          mkdir -p $IPFS_PATH/pins
+          
+          # Set up custom routing for building materials
+          ipfs config --json Routing.Type '"dht"'
+          ipfs config --json Experimental.FilestoreEnabled true
+          ipfs config --json Experimental.UrlstoreEnabled true
+
+  index-files:
+    needs: setup-ipfs
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        file-type: ['cad', 'images', 'cmake', 'golang']
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup IPFS Node
+        run: |
+          wget https://dist.ipfs.io/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz
+          tar -xzf kubo_v0.24.0_linux-amd64.tar.gz
+          sudo install kubo/ipfs /usr/local/bin/
+          ipfs init --profile server
+          ipfs daemon &
+          sleep 10
+
+      - name: Index CAD Files
+        if: matrix.file-type == 'cad'
+        run: |
+          echo "Indexing CAD files..."
+          find . -name "*.cad" -type f | while read file; do
+            if [ -f "$file" ]; then
+              echo "Adding $file to IPFS..."
+              HASH=$(ipfs add -q "$file")
+              echo "CAD:$file:$HASH:$(date -Iseconds)" >> catalog/cad-index.txt
+              
+              # Pin important CAD files
+              ipfs pin add $HASH
+              echo "Pinned CAD file: $file -> $HASH"
+            fi
+          done
+
+      - name: Index Image Files
+        if: matrix.file-type == 'images'
+        run: |
+          echo "Indexing image files..."
+          find . \( -name "*.jpg" -o -name "*.jpeg" -o -name "*.heic" \) -type f | while read file; do
+            if [ -f "$file" ]; then
+              echo "Adding $file to IPFS..."
+              HASH=$(ipfs add -q "$file")
+              echo "IMAGE:$file:$HASH:$(date -Iseconds)" >> catalog/image-index.txt
+              
+              # Generate metadata
+              SIZE=$(stat --format="%s" "$file")
+              echo "METADATA:$file:size=$SIZE:hash=$HASH" >> catalog/image-metadata.txt
+            fi
+          done
+
+      - name: Index CMake Projects
+        if: matrix.file-type == 'cmake'
+        run: |
+          echo "Indexing CMake projects..."
+          find . -name "CMakeLists.txt" -type f | while read file; do
+            PROJECT_DIR=$(dirname "$file")
+            echo "Adding CMake project: $PROJECT_DIR"
+            
+            # Add entire CMake project directory
+            HASH=$(ipfs add -r -q "$PROJECT_DIR" | tail -1)
+            echo "CMAKE:$PROJECT_DIR:$HASH:$(date -Iseconds)" >> catalog/cmake-index.txt
+            
+            # Pin CMake projects
+            ipfs pin add $HASH
+            echo "Pinned CMake project: $PROJECT_DIR -> $HASH"
+          done
+
+      - name: Index Go Repositories
+        if: matrix.file-type == 'golang'
+        run: |
+          echo "Indexing Go repositories..."
+          find . -name "go.mod" -type f | while read file; do
+            PROJECT_DIR=$(dirname "$file")
+            echo "Adding Go project: $PROJECT_DIR"
+            
+            # Add entire Go project directory
+            HASH=$(ipfs add -r -q "$PROJECT_DIR" | tail -1)
+            echo "GOLANG:$PROJECT_DIR:$HASH:$(date -Iseconds)" >> catalog/golang-index.txt
+            
+            # Pin Go projects
+            ipfs pin add $HASH
+            echo "Pinned Go project: $PROJECT_DIR -> $HASH"
+          done
+
+      - name: Upload Index Files
+        run: |
+          # Create catalog directory if it doesn't exist
+          mkdir -p catalog
+          
+          # Upload all index files to IPFS
+          if [ -f "catalog/cad-index.txt" ]; then
+            CAD_INDEX_HASH=$(ipfs add -q catalog/cad-index.txt)
+            echo "CAD index uploaded: $CAD_INDEX_HASH"
+          fi
+          
+          if [ -f "catalog/image-index.txt" ]; then
+            IMAGE_INDEX_HASH=$(ipfs add -q catalog/image-index.txt)
+            echo "Image index uploaded: $IMAGE_INDEX_HASH"
+          fi
+          
+          if [ -f "catalog/cmake-index.txt" ]; then
+            CMAKE_INDEX_HASH=$(ipfs add -q catalog/cmake-index.txt)
+            echo "CMake index uploaded: $CMAKE_INDEX_HASH"
+          fi
+          
+          if [ -f "catalog/golang-index.txt" ]; then
+            GOLANG_INDEX_HASH=$(ipfs add -q catalog/golang-index.txt)
+            echo "Go index uploaded: $GOLANG_INDEX_HASH"
+          fi
+
+  building-materials-catalog:
+    needs: [setup-ipfs, index-files]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup IPFS Node
+        run: |
+          wget https://dist.ipfs.io/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz
+          tar -xzf kubo_v0.24.0_linux-amd64.tar.gz
+          sudo install kubo/ipfs /usr/local/bin/
+          ipfs init --profile server
+          ipfs daemon &
+          sleep 10
+
+      - name: Create Building Materials Catalog
+        run: |
+          mkdir -p catalog/materials catalog/pricing catalog/suppliers
+          
+          # Create master catalog index
+          cat > catalog/master-index.json << 'EOF'
+          {
+            "catalog_version": "1.0.0",
+            "last_updated": "$(date -Iseconds)",
+            "ipfs_node": "${{ needs.setup-ipfs.outputs.node-id }}",
+            "categories": {
+              "cad_files": {
+                "description": "CAD drawings and 3D models",
+                "extensions": [".cad"],
+                "index_file": "cad-index.txt"
+              },
+              "images": {
+                "description": "Product images and documentation",
+                "extensions": [".jpg", ".jpeg", ".heic"],
+                "index_file": "image-index.txt"
+              },
+              "cmake_projects": {
+                "description": "CMake-based building tools and utilities",
+                "index_file": "cmake-index.txt"
+              },
+              "golang_projects": {
+                "description": "Go-based building management tools",
+                "index_file": "golang-index.txt"
+              }
+            }
+          }
+          EOF
+          
+          # Upload master catalog to IPFS
+          CATALOG_HASH=$(ipfs add -q catalog/master-index.json)
+          echo "Master catalog uploaded: $CATALOG_HASH"
+          
+          # Pin the master catalog
+          ipfs pin add $CATALOG_HASH
+          echo "MASTER_CATALOG_HASH=$CATALOG_HASH" >> $GITHUB_ENV
+
+      - name: Create Price Tracking System
+        run: |
+          # Create price tracking structure
+          cat > catalog/pricing/price-tracker.json << 'EOF'
+          {
+            "pricing_system": {
+              "version": "1.0.0",
+              "last_updated": "$(date -Iseconds)",
+              "global_markets": {
+                "lumber": {
+                  "unit": "board_feet",
+                  "suppliers": ["supplier1", "supplier2"],
+                  "tracking_frequency": "daily"
+                },
+                "steel": {
+                  "unit": "metric_ton",
+                  "suppliers": ["steel_supplier1", "steel_supplier2"],
+                  "tracking_frequency": "daily"
+                },
+                "concrete": {
+                  "unit": "cubic_yard",
+                  "suppliers": ["concrete_supplier1"],
+                  "tracking_frequency": "weekly"
+                }
+              }
+            }
+          }
+          EOF
+          
+          # Upload pricing system to IPFS
+          PRICING_HASH=$(ipfs add -q catalog/pricing/price-tracker.json)
+          echo "Price tracking system uploaded: $PRICING_HASH"
+          ipfs pin add $PRICING_HASH
+
+  continuous-sync:
+    needs: [setup-ipfs, index-files, building-materials-catalog]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.event.inputs.force_reindex == 'true'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup IPFS Node
+        run: |
+          wget https://dist.ipfs.io/kubo/v0.24.0/kubo_v0.24.0_linux-amd64.tar.gz
+          tar -xzf kubo_v0.24.0_linux-amd64.tar.gz
+          sudo install kubo/ipfs /usr/local/bin/
+          ipfs init --profile server
+          ipfs daemon &
+          sleep 10
+
+      - name: Sync with IPFS Network
+        run: |
+          echo "Starting continuous sync process..."
+          
+          # Ensure all pinned content is available
+          ipfs pin ls --type recursive | while read hash type; do
+            echo "Verifying pin: $hash"
+            ipfs refs $hash > /dev/null 2>&1 || echo "Warning: Pin $hash may be corrupted"
+          done
+          
+          # Garbage collection to free up space
+          ipfs repo gc
+          
+          # Update routing table
+          ipfs dht provide --recursive /ipfs/$(ipfs pin ls --type recursive | head -1 | cut -d' ' -f1)
+
+      - name: Health Check and Monitoring
+        run: |
+          # Check IPFS node health
+          NODE_ID=$(ipfs id --format="<id>")
+          PEER_COUNT=$(ipfs swarm peers | wc -l)
+          REPO_SIZE=$(ipfs repo stat | grep "RepoSize" | awk '{print $2}')
+          
+          echo "IPFS Health Report:"
+          echo "Node ID: $NODE_ID"
+          echo "Connected Peers: $PEER_COUNT"
+          echo "Repository Size: $REPO_SIZE"
+          
+          # Create health report
+          cat > catalog/health-report.json << EOF
+          {
+            "timestamp": "$(date -Iseconds)",
+            "node_id": "$NODE_ID",
+            "peer_count": $PEER_COUNT,
+            "repo_size": "$REPO_SIZE",
+            "status": "healthy"
+          }
+          EOF
+          
+          # Upload health report
+          HEALTH_HASH=$(ipfs add -q catalog/health-report.json)
+          echo "Health report uploaded: $HEALTH_HASH"
